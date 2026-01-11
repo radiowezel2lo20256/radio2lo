@@ -190,7 +190,7 @@
       for (const day of weekDays) {
         const th = document.createElement("th");
         th.className = "editable";
-        th.innerHTML = `${day}<br><small>${schedule[day].date}</small><span class="edit-icon">✏️</span>`;
+        th.innerHTML = `${day}<br><small>${schedule[day].date}</small><span class="edit-icon"> </span>`;
         th.onclick = () => openEditModal(day);
         header.appendChild(th);
       }
@@ -311,4 +311,5 @@
     main();
   </script>
 </body>
+
 </html>
