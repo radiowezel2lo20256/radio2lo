@@ -16,8 +16,39 @@
     table { width:100%; border-collapse:collapse; text-align:center; }
     th, td { border:1px solid #ccc; padding:10px; vertical-align:middle; }
     th { background:#8865AD; color:white; font-weight:bold; }
-    caption { caption-side:top; font-weight:bold; margin-bottom:10px; }
+    th.editable { cursor: pointer; position: relative; }
+    th.editable:hover { background:#7554a0; }
+    .edit-icon { 
+      font-size: 14px;
+      margin-left: 5px;
+    }
     button { margin:10px; }
+    .person-option {
+      padding: 8px;
+      margin: 5px 0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .person-option:hover {
+      background: #f0f0f0;
+    }
+    .person-option.selected {
+      background: #8865AD;
+      color: white;
+      border-color: #8865AD;
+    }
+    .person-name {
+      font-weight: bold;
+    }
+    .person-class {
+      font-size: 0.9em;
+      color: #666;
+    }
+    .person-option.selected .person-class {
+      color: #eee;
+    }
   </style>
 </head>
 <body>
@@ -34,26 +65,48 @@
     <button id="saveBtn" class="btn btn-success" disabled>💾 Zapisz jako PNG</button>
   </div>
 
+  <!-- Modal do edycji dnia -->
+  <div class="modal fade" id="editModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title">Edytuj dyżur: <span id="modalDayName"></span></h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        </div>
+        <div class="modal-body">
+          <p class="text-muted">Wybierz maksymalnie 2 osoby z listy:</p>
+          <div id="peopleList"></div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Anuluj</button>
+          <button type="button" class="btn btn-primary" id="saveEditBtn">Zapisz zmiany</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
   <script>
-    // 🔧 KONFIGURACJA
     const API_KEY = "AIzaSyCVidQq2T5RZzSXFlrJ9QUOXo3_TduwcCg";
     const SPREADSHEET_ID = "1r-wkjITbyEBckGnXN1rzr4_MI-8U3PwiSoh8gntTi1k";
-    const RANGE = "A:B"; // kolumny: Klasa, Osoby
+    const RANGE = "A:B";
 
     const DAYS = ["Poniedziałek", "Wtorek", "Środa", "Czwartek", "Piątek"];
-    let entries = []; // dane z arkusza
+    let entries = [];
+    let currentSchedule = {};
+    let editingDay = null;
+    let modal = null;
+    let selectedPeople = [];
 
-    // 🗓️ Najbliższy poniedziałek
     function getNextMonday() {
       const now = new Date();
-      const day = now.getDay(); // 0=niedz., 1=pon.
+      const day = now.getDay();
       const diff = (day === 0 ? 1 : 8 - day);
       const monday = new Date(now);
       monday.setDate(now.getDate() + diff);
       return monday;
     }
 
-    // 🗓️ Daty Pn–Pt
     function getWeekDates() {
       const monday = getNextMonday();
       const days = [];
@@ -66,7 +119,6 @@
       return days;
     }
 
-    // 📥 Pobieranie danych z Google Sheets
     async function loadSheetData() {
       const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${RANGE}?key=${API_KEY}`;
       const res = await fetch(url);
@@ -75,9 +127,8 @@
       return data.values || [];
     }
 
-    // 📋 Parsowanie danych
     function parsePeople(rows) {
-      const data = rows.slice(1); // pomijamy nagłówek
+      const data = rows.slice(1);
       const parsed = [];
       for (const [klasa, osobyRaw] of data) {
         if (!klasa && !osobyRaw) continue;
@@ -90,7 +141,16 @@
       return parsed;
     }
 
-    // 🎲 Generowanie harmonogramu
+    function getAllPeople() {
+      const allPeople = [];
+      for (const entry of entries) {
+        for (const name of entry.osoby) {
+          allPeople.push({ name, klasa: entry.klasa });
+        }
+      }
+      return allPeople;
+    }
+
     function generateSchedule(entries) {
       const available = [...entries];
       const weekDays = getWeekDates();
@@ -102,16 +162,13 @@
           continue;
         }
 
-        // losujemy wiersz z tabeli
         const idx = Math.floor(Math.random() * available.length);
         const row = available.splice(idx, 1)[0];
         let osoby = row.osoby;
 
-        // jeśli tylko jedna osoba — tylko ona
         if (osoby.length === 1) {
           schedule[label] = { date, osoby: [{ name: osoby[0], klasa: row.klasa }] };
         } else {
-          // jeśli więcej — wybierz maks. 2 losowe
           const selected = osoby.sort(() => 0.5 - Math.random()).slice(0, 2);
           schedule[label] = { 
             date, 
@@ -122,7 +179,6 @@
       return schedule;
     }
 
-    // 🧱 Rysowanie tabeli
     function renderTable(schedule) {
       const container = document.getElementById("result");
       container.innerHTML = "";
@@ -130,16 +186,16 @@
       const weekDays = Object.keys(schedule);
       const table = document.createElement("table");
 
-      // nagłówek
       const header = document.createElement("tr");
       for (const day of weekDays) {
         const th = document.createElement("th");
-        th.innerHTML = `${day}<br><small>${schedule[day].date}</small>`;
+        th.className = "editable";
+        th.innerHTML = `${day}<br><small>${schedule[day].date}</small><span class="edit-icon">✏️</span>`;
+        th.onclick = () => openEditModal(day);
         header.appendChild(th);
       }
       table.appendChild(header);
 
-      // rząd 1
       const row1 = document.createElement("tr");
       for (const day of weekDays) {
         const td = document.createElement("td");
@@ -149,7 +205,6 @@
       }
       table.appendChild(row1);
 
-      // rząd 2
       const row2 = document.createElement("tr");
       for (const day of weekDays) {
         const td = document.createElement("td");
@@ -162,13 +217,64 @@
       container.appendChild(table);
     }
 
-    // 🔁 Generowanie nowego harmonogramu
-    function regenerate() {
-      const schedule = generateSchedule(entries);
-      renderTable(schedule);
+    function openEditModal(day) {
+      editingDay = day;
+      selectedPeople = [...currentSchedule[day].osoby].filter(p => p);
+      
+      document.getElementById("modalDayName").textContent = `${day} (${currentSchedule[day].date})`;
+      
+      const peopleList = document.getElementById("peopleList");
+      peopleList.innerHTML = "";
+      
+      const allPeople = getAllPeople();
+      
+      allPeople.forEach((person, idx) => {
+        const div = document.createElement("div");
+        div.className = "person-option";
+        div.innerHTML = `
+          <div class="person-name">${person.name}</div>
+          <div class="person-class">${person.klasa}</div>
+        `;
+        
+        const isSelected = selectedPeople.some(p => p.name === person.name && p.klasa === person.klasa);
+        if (isSelected) {
+          div.classList.add("selected");
+        }
+        
+        div.onclick = () => togglePerson(div, person);
+        peopleList.appendChild(div);
+      });
+      
+      modal.show();
     }
 
-    // 💾 Zapis jako PNG
+    function togglePerson(element, person) {
+      const isSelected = element.classList.contains("selected");
+      
+      if (isSelected) {
+        element.classList.remove("selected");
+        selectedPeople = selectedPeople.filter(p => !(p.name === person.name && p.klasa === person.klasa));
+      } else {
+        if (selectedPeople.length < 2) {
+          element.classList.add("selected");
+          selectedPeople.push(person);
+        } else {
+          alert("Możesz wybrać maksymalnie 2 osoby na jeden dzień.");
+        }
+      }
+    }
+
+    function saveEdit() {
+      currentSchedule[editingDay].osoby = [...selectedPeople];
+      renderTable(currentSchedule);
+      modal.hide();
+    }
+
+    function regenerate() {
+      currentSchedule = generateSchedule(entries);
+      renderTable(currentSchedule);
+    }
+
     async function saveAsImage() {
       const node = document.getElementById("result");
       const canvas = await html2canvas(node, { scale: 2 });
@@ -178,11 +284,14 @@
       a.click();
     }
 
-    // 🚀 Start
     async function main() {
       const result = document.getElementById("result");
       const saveBtn = document.getElementById("saveBtn");
       const regenBtn = document.getElementById("regenBtn");
+
+      modal = new bootstrap.Modal(document.getElementById('editModal'));
+      
+      document.getElementById("saveEditBtn").addEventListener("click", saveEdit);
 
       try {
         const rows = await loadSheetData();
